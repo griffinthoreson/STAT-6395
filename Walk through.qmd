@@ -1,0 +1,145 @@
+---
+title: "Insight-Bridge: Agentic EDA Dashboard"
+author: "Griffin Thoreson"
+date: "May 2026"
+format: 
+  html:
+    theme: flatly
+    toc: true
+    toc-depth: 3
+    code-fold: show
+    embed-resources: true
+---
+
+##  Live Dashboard Access
+**[Click Here to Access the Live Dashboard on Posit Connect Cloud](https://019e0d80-53c8-ff17-8f14-a804f7640511.share.connect.posit.cloud/)**
+
+*(Note: The live application features an API session limit of 15 queries per user to prevent abuse. If you reach the limit, simply refresh the page to start a new session.)*
+
+
+## 1. Project Overview & Setup Instructions
+
+### Project Context & Problem Statement
+Traditional Exploratory Data Analysis (EDA) often presents a high barrier to entry for non-technical stakeholders. While platforms like Tableau or Power BI offer polished visuals, they are "passive" environments requiring manual navigation. Conversely, standard LLM chatbots often "hallucinate" statistics because they attempt to perform complex math in-context rather than using a verified statistical engine.
+
+My project solves this by creating an **agentic bridge**. It leverages the reasoning power of Claude 4.5 (Anthropic, 2026) to understand user intent and physically manipulate a R Shiny environment to perform math and generate plots.
+
+### Comparison to Existing Tools (Prior Art)
+To ensure this tool provided novel value, the following existing approaches were analyzed:
+* **OpenAI Advanced Data Analysis:** A powerful execution engine that ultimately functions as a "black box" lacking a persistent UI or transparent statistical grounding.
+* **`chattr` (R Package):** Excellent for developers, but built primarily for use within RStudio, creating a barrier for non-technical users.
+* **Insight-Bridge Advantage:** Provides a stakeholder-friendly dashboard where the AI has "agency" to control UI inputs and interpret verified R outputs (ANOVA/Pearson) in real-time.
+
+### Required Packages & Dependencies
+A reader with a working knowledge of R can recreate this environment by installing the following:
+```r
+# Core Web and Graphics
+install.packages(c("shiny", "bslib", "ggplot2", "dplyr", "duckdb"))
+
+# LLM Agent and Chat Interface
+install.packages(c("ellmer", "shinychat", "querychat"))
+```
+API Configuration
+To run this project, you must have an Anthropic API key.
+
+## 2. Step-by-Step Architecture
+
+### Step 1: UI & Ingestion
+The UI utilizes `bslib`'s `page_sidebar` layout. Data is ingested via `read.csv` and wrapped in a `reactive()` object, ensuring the rest of the app updates immediately upon upload.
+
+```r
+ui <- page_sidebar(
+  title = "Insight-Bridge: Agentic EDA Dashboard",
+  theme = bs_theme(bootswatch = "flatly"), 
+  sidebar = sidebar(
+    h5("1. Upload Data"),
+    fileInput("user_file", "Upload a CSV File:", accept = ".csv"),
+    uiOutput("dynamic_querychat_ui"), 
+    # ... plot controls ...
+  ),
+  layout_columns(
+    col_widths = c(7, 5), 
+    card(plotOutput("eda_plot"), uiOutput("stats_readout")),
+    card(chat_ui("chat"))
+  )
+)
+```
+
+### Step 2: Agentic Tool Calling
+Using the `ellmer` package, I defined a `tool()` that allows the LLM to call an R function. This effectively gives the AI the ability to move the dashboard's sliders and dropdowns based on user intent.
+
+```r
+update_dashboard_tool <- tool(
+  name = "update_dashboard_graph",
+  description = "Use this tool to change the UI dropdowns and draw a new graph.",
+  arguments = list(
+    new_x = type_string("Column for X-axis"),
+    new_y = type_string("Column for Y-axis"),
+    new_plot_type = type_string("Must be 'Box Plot (Category vs Metric)' or 'Scatter Plot (Metric vs Metric)'"),
+    new_color = type_string("Color grouping column, or 'None'")
+  ),
+  fun = function(new_x, new_y, new_plot_type, new_color = "None") {
+    updateSelectInput(session, "x_var", selected = new_x)
+    updateSelectInput(session, "y_var", selected = new_y)
+    updateSelectInput(session, "plot_type", selected = new_plot_type)
+    updateSelectInput(session, "color_var", selected = new_color)
+  }
+)
+```
+
+### Step 3: The Math 
+To prevent LLM "hallucinations," all statistics are calculated by the R server. The engine automatically detects the plot type to run the appropriate test—ANOVA for categorical comparisons and Pearson for metric relationships.
+
+```r
+statistical_results <- reactive({
+  # Logic to switch between aov() and cor.test() based on input$plot_type
+  if (input$plot_type == "Box Plot (Category vs Metric)") {
+    form <- as.formula(paste(input$y_var, "~", input$x_var))
+    model <- aov(form, data = df_filtered)
+    # ... extract p-value and F-statistic ...
+  } else {
+    cor_test <- cor.test(df_filtered[[input$x_var]], df_filtered[[input$y_var]])
+    # ... extract p-value and r-coefficient ...
+  }
+})
+```
+
+
+
+## 3. Feature Demonstration
+
+Below is a demonstration of the agentic workflow in action. In this example, the user provides a natural language prompt, and the AI agent autonomously updates the dashboard.
+
+### Video Walkthrough
+**https://youtu.be/2htQIrnKDqg**
+
+### Sample Execution Trace
+1.  **User Input:** "Compare academic performance across different genders."
+2.  **AI Action:** Generates a tool call for `update_dashboard_graph` with X as `gender` and Y as `academic_performance`.
+3.  **System Output:** UI updates instantly; R calculates ANOVA results; AI interprets the p-value for the user.
+
+
+## 4. Discussion: Limitations, Lessons Learned, & Extensions
+
+### Limitations
+* **Causation Trap:** The model describes correlations only. A "Pump the Brakes" guardrail is implemented to prevent the AI from inferring causal links where only statistical associations exist.
+* **Memory Constraints:** Hosted on the Posit Connect Cloud free tier (4GB RAM), the app is limited to datasets under 1,000,000 rows; exceeding this threshold will result in an R session crash.
+* **Statistical Model Scope:** Currently optimized for bivariate testing; the system lacks support for multivariate modeling or the ability to account for complex interaction effects.
+
+### Lessons Learned & Technical Hindsight
+The development demonstrated that the primary challenge in agentic design is not the LLM's reasoning capability, but the **synchronization** between the AI and the R server. For an agent to successfully manipulate a UI, the system must provide a highly structured "hidden context" that translates raw statistical outputs into a format the LLM can interpret without hallucination. 
+
+A major takeaway was the friction between reactive programming and LLM latency. In hindsight, while the `read.csv` approach was effective for a proof-of-concept, a production-scale application would benefit from a high-performance database engine like **DuckDB** to mitigate the RAM bottlenecks observed in the cloud-hosted environment. This would allow for more complex, real-time data filtering that current in-memory methods struggle to support at scale.
+
+### Potential Extensions & Future Work
+* **Multivariate Modeling:** I would extend the tool-calling logic to include **Multiple Linear Regression** and **Random Forest** interpretation to support more complex data stories.
+* **Automated Reporting:** A significant future extension would be the implementation of built-in report generation, allowing the agent to render and export a **Quarto report** based on the active session's findings.
+
+### Reflection on GenAI Collaboration
+I used Gemini to assist with this project. It helped me get the different parts of the code to "talk" to each other. Getting the chat box to be able to update the graphs was one of the main areas I used AI assistance. I also used Gemini to help me with visual formating of this document. 
+
+
+## 5. References & Documentation
+* **Anthropic. (2026).** *Claude 4.5: Frontier Model and Tool Use Documentation*.
+* **Wickham, H., et al. (2026).** *ellmer: Call Large Language Models from R*. [https://ellmer.tidyverse.org/](https://ellmer.tidyverse.org/)
+* **Chang, W., et al. (2026).** *shiny: Web Application Framework for R*. [https://shiny.posit.co/](https://shiny.posit.co/)
